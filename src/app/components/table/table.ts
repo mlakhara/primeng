@@ -1,4 +1,4 @@
-import { NgModule, Component, HostListener, OnInit, AfterViewInit, AfterViewChecked, Directive, AfterContentInit, Input, Output, EventEmitter, ElementRef, ContentChildren, TemplateRef, QueryList, ViewChild, NgZone, EmbeddedViewRef, ViewContainerRef, forwardRef } from '@angular/core';
+import { NgModule, Component, HostListener, OnInit, AfterViewInit, AfterViewChecked, Directive, AfterContentInit, Input, Output, EventEmitter, ElementRef, ContentChildren, TemplateRef, QueryList, ViewChild, NgZone, EmbeddedViewRef, ViewContainerRef, forwardRef, ComponentFactoryResolver } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Column, PrimeTemplate, SharedModule } from '../common/shared';
 import { PaginatorModule } from '../paginator/paginator';
@@ -1694,7 +1694,8 @@ export class TableBody {
         <div #scrollBody class="ui-table-scrollable-body">
             <table #scrollTable [ngClass]="{'ui-table-virtual-table': dt.virtualScroll}" class="ui-table-scrollable-body-table">
                 <ng-container *ngTemplateOutlet="frozen ? dt.frozenColGroupTemplate||dt.colGroupTemplate : dt.colGroupTemplate; context {$implicit: columns}"></ng-container>
-                <tbody class="ui-table-tbody" [pVirtualScroller]="columns" [pVirtualScrollerBodyTemplate]="frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate"></tbody>
+                <ng-container pVirtualScrollerHost [pVirtualScrollerColumns]="columns" [pVirtualScrollerBodyTemplate]="frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate"></ng-container>
+
             </table>
             <div #virtualScroller class="ui-table-virtual-scroller"></div>
         </div>
@@ -2984,11 +2985,72 @@ export class ReorderableRow implements AfterViewInit {
     }
 }
 
-@Component({
-    selector: '[pVirtualScroller]',
-    template: ``
+@Directive({
+    selector: '[pVirtualScrollerHost]',
 })
-export class VirtualScroller {
+export class VirtualScrollerHost {
+     /**
+     * Number of rows shown in the viewport
+     *
+     * @type {number}
+     * @memberof VirtualScroller
+     */
+    @Input()
+    rows: number = 20;
+
+
+    /**
+     * Columns used by pBody to render the rows
+     *
+     * @type {*}
+     * @memberof VirtualScroller
+     */
+    @Input("pVirtualScrollerColumns")
+    columns: any;
+
+
+    /**
+     * tempalte used to render the row of the table
+     *
+     * @type {*}
+     * @memberof VirtualScroller
+     */
+    @Input("pVirtualScrollerBodyTemplate")
+    pBodyTemplate: any;
+    constructor(public viewContainerRef: ViewContainerRef, private componentFactoryResolver: ComponentFactoryResolver) {
+
+    }
+
+    ngOnInit() {
+        this.createVirtualScroller();
+    }
+
+    createVirtualScroller() {
+        let componentFactory = this.componentFactoryResolver.resolveComponentFactory(VirtualScroller);
+        let componentRef = this.viewContainerRef.createComponent(componentFactory);
+        (<VirtualScroller>componentRef.instance).pBodyTemplate = this.pBodyTemplate;
+        (<VirtualScroller>componentRef.instance).columns = this.columns;
+
+        //(<VirtualScroller>componentRef.instance).ngOnInit();
+
+    }
+}
+
+@Directive({
+    selector: '[pVirtualScrollSegmentContainer]',
+})
+export class VirtualScrollSegmentContainer {
+
+    constructor(public viewContainerRef: ViewContainerRef){
+
+    }
+}
+
+@Component({
+    selector: 'pVirtualScroller',
+    template: `<ng-container pVirtualScrollSegmentContainer></ng-container>`
+})
+export class VirtualScroller implements OnInit {
 
 
     /**
@@ -3019,6 +3081,9 @@ export class VirtualScroller {
      */
     @Input("pVirtualScrollerBodyTemplate")
     pBodyTemplate: any;
+
+    @ViewChild(VirtualScrollSegmentContainer)
+    segmentContainer: VirtualScrollSegmentContainer;
 
 
     /**
@@ -3107,7 +3172,13 @@ export class VirtualScroller {
         return Math.floor((this.segmentsCount - 2) / 2);
     }
 
+    constructor(private dt: Table, private componentFactoryResolver: ComponentFactoryResolver) {
+    }
 
+
+    ngOnInit() {
+        this.createSegment(1);
+    }
 
     /**
      * return true if a segment needs to be appended.
@@ -3239,6 +3310,21 @@ export class VirtualScroller {
     }
 
     createSegment(segmentIndex: number) {
+        let componentFactory = this.componentFactoryResolver.resolveComponentFactory(TableBodySegment);
+        let componentRef = this.segmentContainer.viewContainerRef.createComponent(componentFactory);
+        console.log(this.pBodyTemplate, 'body template');]
+
+        (<TableBodySegment>componentRef.instance).segmentIndex = segmentIndex;
+        (<TableBodySegment>componentRef.instance).template = this.pBodyTemplate;
+        (<TableBodySegment>componentRef.instance).columns = this.columns;
+
+
+        (<TableBodySegment>componentRef.instance).rows = [
+
+                {"brand": "VW", "year": 2012, "color": "Orange", "vin": 0},
+                {"brand": "Audi", "year": 2011, "color": "Black", "vin": 0 + 1},
+                {"brand": "Renault", "year": 2005, "color": "Gray", "vin": 0 + 2},
+        ]
     }
 
 
@@ -3260,8 +3346,22 @@ export class VirtualScroller {
     }
 }
 
+
+
 @Component({
-    selector: 'p-table-body-segment',
+    selector: 'p-sampleSegment',
+    template: `<div>{{segmentIndex}}</div>`
+})
+export class SampleSegment {
+    @Input("segmentIndex") segmentIndex: number;
+
+    constructor(public dt: Table){
+
+    }
+}
+
+@Component({
+    selector: 'tBody[virtualScrollBodySegment]',
     template: `
         <ng-container *ngIf="!dt.expandedRowTemplate">
             <ng-template ngFor let-rowData let-rowIndex="index" [ngForOf]="rows" [ngForTrackBy]="dt.rowTrackBy">
@@ -3304,7 +3404,8 @@ export class TableBodySegment {
 
 @NgModule({
     imports: [CommonModule, PaginatorModule],
-    exports: [Table, SharedModule, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment],
-    declarations: [Table, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, TableBody, ScrollableView, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment]
+    exports: [Table, SharedModule, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment, SampleSegment, VirtualScrollSegmentContainer, VirtualScrollerHost],
+    declarations: [Table, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, TableBody, ScrollableView, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment, SampleSegment, VirtualScrollSegmentContainer, VirtualScrollerHost],
+    entryComponents: [SampleSegment, TableBodySegment, VirtualScroller]
 })
 export class TableModule { }
