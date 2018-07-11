@@ -1,4 +1,4 @@
-import { NgModule, Component, HostListener, OnInit, AfterViewInit, AfterViewChecked, Directive, AfterContentInit, Input, Output, EventEmitter, ElementRef, ContentChildren, TemplateRef, QueryList, ViewChild, NgZone, EmbeddedViewRef, ViewContainerRef, forwardRef, ComponentFactoryResolver } from '@angular/core';
+import { NgModule, Component, HostListener, OnInit, AfterViewInit, AfterViewChecked, Directive, AfterContentInit, Input, Output, EventEmitter, ElementRef, ContentChildren, TemplateRef, QueryList, ViewChild, NgZone, EmbeddedViewRef, ViewContainerRef, forwardRef, ComponentFactoryResolver, ViewChildren, Renderer2, OnChanges, SimpleChanges, ChangeDetectorRef, Attribute } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Column, PrimeTemplate, SharedModule } from '../common/shared';
 import { PaginatorModule } from '../paginator/paginator';
@@ -9,8 +9,10 @@ import { FilterMetadata } from '../common/filtermetadata';
 import { OnDestroy } from '@angular/core/src/metadata/lifecycle_hooks';
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs/Subject';
-import { Subscription } from 'rxjs/Subscription';
 import { Observable } from 'rxjs/Observable';
+import { Subscription } from 'rxjs/Subscription';
+import { UiScrollModule, IDatasource } from 'ngx-ui-scroll';
+
 
 @Injectable()
 export class TableService {
@@ -199,6 +201,8 @@ export class Table implements OnInit, AfterContentInit {
 
     @Input() exportFunction;
 
+    @Input() virtualScrollDataPromise: (any) => Promise<Array<any>>;
+
     @Output() onRowSelect: EventEmitter<any> = new EventEmitter();
 
     @Output() onRowUnselect: EventEmitter<any> = new EventEmitter();
@@ -312,6 +316,7 @@ export class Table implements OnInit, AfterContentInit {
     virtualScrollTimer: any;
 
     virtualScrollCallback: Function;
+
 
     preventSelectionSetterPropagation: boolean;
 
@@ -679,9 +684,9 @@ export class Table implements OnInit, AfterContentInit {
         }
         else if (this.sortMode === 'multiple') {
             let sorted = false;
-            if (this.multiSortMeta)  {
+            if (this.multiSortMeta) {
                 for (let i = 0; i < this.multiSortMeta.length; i++) {
-                    if (this.multiSortMeta[i].field == field)  {
+                    if (this.multiSortMeta[i].field == field) {
                         sorted = true;
                         break;
                     }
@@ -1692,10 +1697,10 @@ export class TableBody {
             </div>
         </div>
         <div #scrollBody class="ui-table-scrollable-body">
-            <table #scrollTable [ngClass]="{'ui-table-virtual-table': dt.virtualScroll}" class="ui-table-scrollable-body-table">
-                <ng-container *ngTemplateOutlet="frozen ? dt.frozenColGroupTemplate||dt.colGroupTemplate : dt.colGroupTemplate; context {$implicit: columns}"></ng-container>
-                <ng-container pVirtualScrollerHost [pVirtualScrollerColumns]="columns" [pVirtualScrollerBodyTemplate]="frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate"></ng-container>
-
+            <p-virtualScrollTable *ngIf="dt.virtualScroll" [totalRecords]="dt.totalRecords" [scrollViewPort]="scrollBody"></p-virtualScrollTable>
+            <table *ngIf="!dt.virtualScroll" #scrollTable [ngClass]="{'ui-table-virtual-table': dt.virtualScroll}" class="ui-table-scrollable-body-table">
+                    <ng-container *ngTemplateOutlet="frozen ? dt.frozenColGroupTemplate||dt.colGroupTemplate : dt.colGroupTemplate; context {$implicit: columns}"></ng-container>
+                    <tbody class="ui-table-tbody" [pTableBody]="columns" [pTableBodyTemplate]="frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate"></tbody>
             </table>
             <div #virtualScroller class="ui-table-virtual-scroller"></div>
         </div>
@@ -1730,6 +1735,10 @@ export class ScrollableView implements AfterViewInit, OnDestroy, AfterViewChecke
     @ViewChild('scrollFooterBox') scrollFooterBoxViewChild: ElementRef;
 
     @ViewChild('virtualScroller') virtualScrollerViewChild: ElementRef;
+
+
+    @ViewChild(forwardRef(() => VirtualScrollTable))
+    virtualScrollTable: VirtualScrollTable;
 
     headerScrollListener: Function;
 
@@ -1785,6 +1794,9 @@ export class ScrollableView implements AfterViewInit, OnDestroy, AfterViewChecke
     }
 
     ngAfterViewInit() {
+        if (this.dt.virtualScroll) {
+            this.scrollTableViewChild = this.virtualScrollTable.scrollTableViewChild;
+        }
         this.bindEvents();
         this.setScrollHeight();
         this.alignScrollBar();
@@ -1829,7 +1841,9 @@ export class ScrollableView implements AfterViewInit, OnDestroy, AfterViewChecke
 
             if (!this.frozen) {
                 this.bodyScrollListener = this.onBodyScroll.bind(this);
-                this.scrollBodyViewChild.nativeElement.addEventListener('scroll', this.bodyScrollListener);
+                if(!this.dt.virtualScroll) {
+                    this.scrollBodyViewChild.nativeElement.addEventListener('scroll', this.bodyScrollListener);
+                }
             }
         });
     }
@@ -1875,7 +1889,7 @@ export class ScrollableView implements AfterViewInit, OnDestroy, AfterViewChecke
             let pageCount = (virtualTableHeight / pageHeight) || 1;
             let scrollBodyTop = this.scrollTableViewChild.nativeElement.style.top || '0';
 
-            if ((this.scrollBodyViewChild.nativeElement.scrollTop + viewport > parseFloat(scrollBodyTop) + tableHeight) ||  (this.scrollBodyViewChild.nativeElement.scrollTop < parseFloat(scrollBodyTop))) {
+            if ((this.scrollBodyViewChild.nativeElement.scrollTop + viewport > parseFloat(scrollBodyTop) + tableHeight) || (this.scrollBodyViewChild.nativeElement.scrollTop < parseFloat(scrollBodyTop))) {
                 let page = Math.floor((this.scrollBodyViewChild.nativeElement.scrollTop * pageCount) / (this.scrollBodyViewChild.nativeElement.scrollHeight)) + 1;
                 this.dt.handleVirtualScroll({
                     page: page,
@@ -2985,158 +2999,79 @@ export class ReorderableRow implements AfterViewInit {
     }
 }
 
-@Directive({
-    selector: '[pVirtualScrollerHost]',
-})
-export class VirtualScrollerHost {
-     /**
-     * Number of rows shown in the viewport
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    @Input()
-    rows: number = 20;
-
-
-    /**
-     * Columns used by pBody to render the rows
-     *
-     * @type {*}
-     * @memberof VirtualScroller
-     */
-    @Input("pVirtualScrollerColumns")
-    columns: any;
-
-
-    /**
-     * tempalte used to render the row of the table
-     *
-     * @type {*}
-     * @memberof VirtualScroller
-     */
-    @Input("pVirtualScrollerBodyTemplate")
-    pBodyTemplate: any;
-    constructor(public viewContainerRef: ViewContainerRef, private componentFactoryResolver: ComponentFactoryResolver) {
-
-    }
-
-    ngOnInit() {
-        this.createVirtualScroller();
-    }
-
-    createVirtualScroller() {
-        let componentFactory = this.componentFactoryResolver.resolveComponentFactory(VirtualScroller);
-        let componentRef = this.viewContainerRef.createComponent(componentFactory);
-        (<VirtualScroller>componentRef.instance).pBodyTemplate = this.pBodyTemplate;
-        (<VirtualScroller>componentRef.instance).columns = this.columns;
-
-        //(<VirtualScroller>componentRef.instance).ngOnInit();
-
-    }
+export enum SegmentPositions {
+    ABOVE = "ABOVE",
+    PARTIAL_ABOVE = "PARTIAL_ABOVE",
+    ENCLOSED = "ENCLOSED",
+    PARTIAL_BELOW = "PARTIAL_BELOW",
+    BELOW = "BELOW"
 }
-
-@Directive({
-    selector: '[pVirtualScrollSegmentContainer]',
-})
-export class VirtualScrollSegmentContainer {
-
-    constructor(public viewContainerRef: ViewContainerRef){
-
-    }
+export enum ScrollDirection {
+    UP = "UP",
+    DOWN = "DOWN"
 }
-
 @Component({
-    selector: 'pVirtualScroller',
-    template: `<ng-container pVirtualScrollSegmentContainer></ng-container>`
+    selector: 'p-virtualScrollTable',
+    template: `
+        <table #scrollTable [ngClass]="{'ui-table-virtual-table': dt.virtualScroll}" class="ui-table-scrollable-body-table">
+            <ng-container *ngTemplateOutlet="scrollableView.frozen ? dt.frozenColGroupTemplate||dt.colGroupTemplate : dt.colGroupTemplate; context {$implicit: scrollableView.columns}"></ng-container>
+
+            <tbody #scrollSizeProxy class="ui-table-tbody ui-tbody-segment-zero" segmentIndex="-1" frameIndex="0" style="height:0px;display:table-caption"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-first" segmentIndex="0" [frameIndex]="getFrameIndex(0)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-second" segmentIndex="1" [frameIndex]="getFrameIndex(1)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-third" segmentIndex="2" [frameIndex]="getFrameIndex(2)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-fourth" segmentIndex="3" [frameIndex]="getFrameIndex(3)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-fifth" segmentIndex="4" [frameIndex]="getFrameIndex(4)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-sixth" segmentIndex="5" [frameIndex]="getFrameIndex(5)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-seventh" segmentIndex="6" [frameIndex]="getFrameIndex(6)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+
+            <tbody class="ui-table-tbody ui-tbody-segment-eighth" segmentIndex="7" [frameIndex]="getFrameIndex(7)" [pVirtualScrollBodySegment]="scrollableView.columns" [pTableBodyTemplate]="scrollableView.frozen ? dt.frozenBodyTemplate||dt.bodyTemplate : dt.bodyTemplate" [rows]="dt.paginator ? ((dt.filteredValue||dt.value) | slice:(dt.lazy ? 0 : dt.first):((dt.lazy ? 0 : dt.first) + dt.rows)) : (dt.filteredValue||dt.value)"></tbody>
+        </table>`
 })
-export class VirtualScroller implements OnInit {
+export class VirtualScrollTable {
 
+    @ViewChild('scrollTable') scrollTableViewChild: ElementRef;
+
+    @ViewChild('scrollSizeProxy')
+    scrollSizeProxy: ElementRef;
+
+    @ViewChildren(forwardRef(() => TableBodySegment))
+    segments: QueryList<TableBodySegment>;
+
+    @ViewChildren(forwardRef(() => TableBodySegment), { read: ElementRef })
+    segmentElementRefs: QueryList<ElementRef>;
+
+    @Input('scrollViewPort')
+    scrollViewPort: Element;
+
+    _totalRecords: number;
+    frameIndices: any;
+    bodyScrollListener: () => void;
+
+    @Input('totalRecords')
+    get totalRecords() {
+        return this._totalRecords;
+    }
+
+    set totalRecords(value: number) {
+        this._totalRecords = value;
+    }
 
     /**
-     * Number of rows shown in the viewport
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
+    * Number of rows shown in the viewport
+    *
+    * @type {number}
+    * @memberof VirtualScroller
+    */
     @Input()
-    rows: number = 20;
-
-
-    /**
-     * Columns used by pBody to render the rows
-     *
-     * @type {*}
-     * @memberof VirtualScroller
-     */
-    @Input("pVirtualScroller")
-    columns: any;
-
-
-    /**
-     * tempalte used to render the row of the table
-     *
-     * @type {*}
-     * @memberof VirtualScroller
-     */
-    @Input("pVirtualScrollerBodyTemplate")
-    pBodyTemplate: any;
-
-    @ViewChild(VirtualScrollSegmentContainer)
-    segmentContainer: VirtualScrollSegmentContainer;
-
-
-    /**
-     * Number of segments of the data to be rendered
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    segmentsCount: number = 8;
-
-
-    /**
-     * Index of the first segment which is rendered
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    firstSegmentIndex: number;
-
-
-    /**
-     * Index of the last segment which is rendered
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    lastSegmentIndex: number;
-
-    /**
-     * Index of first row which is rendered in DOM
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    start: number = 0;
-
-
-    /**
-     * Index of the last row which is rendered in DOM
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    end: number;
-
-
-    /**
-     * Count of total rows
-     *
-     * @type {number}
-     * @memberof VirtualScroller
-     */
-    totalRecords: number;
+    rowCountInViewPort: number = 10;
 
 
     /**
@@ -3146,7 +3081,7 @@ export class VirtualScroller implements OnInit {
      * @memberof VirtualScroller
      */
     get rowsPerSegment() {
-        return Math.floor(this.rows / 2);
+        return Math.floor(this.rowCountInViewPort / 2);
     }
 
 
@@ -3157,219 +3092,467 @@ export class VirtualScroller implements OnInit {
      * @memberof VirtualScroller
      */
     get maxRows() {
-        return this.segmentsCount * this.rowsPerSegment;
+        return this.segmentCount * this.rowsPerSegment;
+    }
+
+
+    get maxFrameIndex() {
+        return Math.floor(this.totalRecords / (this.segmentCount * this.rowsPerSegment))
+    }
+
+    get maxFrameIndexTill() {
+        const remainder = (this.totalRecords / (this.segmentCount * this.rowsPerSegment)) - this.maxFrameIndex;
+        return Math.ceil(this.segmentCount * remainder);
     }
 
 
     /**
      * Number of segments rendered above or below the view port
-     * Since two segments are in the viewport , we subtract that and divide that by 2 to get the number of segments above or below the viewport
+     * Since two segments are in the viewport,
+     * we subtract that and divide that by 2 to get the number of segments above or below the viewport
      *
      * @readonly
      * @memberof VirtualScroller
      */
     get bufferSegmentsCount() {
-        return Math.floor((this.segmentsCount - 2) / 2);
+        return Math.floor((this.segmentCount - 2) / 2);
     }
 
-    constructor(private dt: Table, private componentFactoryResolver: ComponentFactoryResolver) {
+    segmentCount = 8;
+
+    lastScrollTop = 0;
+
+    scrollDirection: ScrollDirection;
+
+    segmentPositions: any[];
+
+    constructor(
+        public scrollableView: ScrollableView,
+        public dt: Table,
+        public domHandler: DomHandler,
+        public zone: NgZone,
+        public render: Renderer2) {
+        this.initialize();
     }
 
-
-    ngOnInit() {
-        this.createSegment(1);
+    ngAfterViewInit() {
+        this.addBodyScrollListener();
     }
 
-    /**
-     * return true if a segment needs to be appended.
-     * If the last row rendered is not the last of all the data then more show can be appended
-     *
-     * @memberof VirtualScroller
-     */
-    canAppendSegment() {
-        if (this.end !== this.totalRecords) {
-            return true;
+    ngOnDestroy() {
+        if (this.bodyScrollListener) {
+            this.bodyScrollListener();
+            this.bodyScrollListener = null
         }
-        return false;
+    }
+
+    initialize() {
+        this.segmentPositions = (new Array(this.segmentCount)).fill(SegmentPositions.PARTIAL_ABOVE);
+        this.frameIndices = (new Array(this.segmentCount)).fill(0);
+    }
+
+
+    addBodyScrollListener() {
+        this.zone.runOutsideAngular(() => {
+            this.bodyScrollListener = this.render.listen(
+                this.scrollViewPort,
+                'scroll',
+                this.bodyScrollHandler.bind(this)
+            );
+        });
     }
 
 
     /**
-     * If the first rendred row is not the actual first row; then rows can be prepended
+     * callback to be executed on body scroll
+     *
+     * @param {*} event
+     * @memberof VirtualScrollTable
+     */
+    bodyScrollHandler(event: any) {
+        this.setScrollDirection(event);
+        let viewportOffset = this.domHandler.getOffset(this.scrollViewPort);
+        let viewportHeight = this.domHandler.getOuterHeight(this.scrollViewPort);
+
+        let segments = this.segmentElementRefs.toArray();
+
+        for (let i = 0; i < segments.length; i++) {
+            let position = this.getVisibleStatus(segments[i].nativeElement, viewportOffset, viewportHeight);
+            this.cycleSegmentsIfNeeded(segments[i].nativeElement, position);
+        }
+
+    }
+
+
+    /**
+     * Set the scroll direction based on previous and current scroll positions
+     *
+     * @param {*} event
+     * @memberof VirtualScrollTable
+     */
+    setScrollDirection(event) {
+        this.scrollDirection = this.lastScrollTop > event.target.scrollTop ? ScrollDirection.UP : ScrollDirection.DOWN;
+        this.lastScrollTop = event.target.scrollTop;
+    }
+
+
+    /**
+     * Execute segment cylcing if needed
+     *
+     * @param {Element} segment
+     * @param {SegmentPositions} currentPosition
+     * @memberof VirtualScrollTable
+     */
+    cycleSegmentsIfNeeded(segment: Element, currentPosition: SegmentPositions) {
+        // move only if the segment is firstSegment or lastSegment
+        let shouldCycle = this.shouldCycle(segment, this.scrollDirection, currentPosition);
+
+        if (shouldCycle) {
+            let diff = 1;
+            if (this.scrollDirection === ScrollDirection.DOWN) {
+                this.moveToEnd();
+                diff = diff * this.domHandler.getOuterHeight(segment);
+                this.changeScrollProxyHeight(diff);
+            } else if (this.scrollDirection === ScrollDirection.UP) {
+                this.moveToTop();
+                diff = -1;
+                diff = diff * this.domHandler.getOuterHeight(segment);
+                this.changeScrollProxyHeight(diff);
+            }
+        }
+        this.segmentPositions[this.getSegmentIndex(segment)] = currentPosition;
+
+    }
+
+
+    /**
+     * Return the value of segmentIndex attribute of given segment
+     *
+     * @param {*} segment
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    getSegmentIndex(segment) {
+        return parseInt(segment.getAttribute('segmentIndex'));
+    }
+
+
+    /**
+     * return the first segment in DOM
      *
      * @returns
-     * @memberof VirtualScroller
+     * @memberof VirtualScrollTable
      */
-    canPrependSegment() {
-        if (this.start !== 0) {
-            return true;
-        }
-        return false;
+    getFirstSegment() {
+        return this.scrollTableViewChild.nativeElement.firstElementChild.nextElementSibling;
     }
 
 
     /**
-     * Returns true if the first segment should be removed
-     *
-     * @memberof VirtualScroller
-     */
-    shouldRemoveFirst() {
-        // if we can append segments but max rows are rendered then we need to remove the first segment
-        if (this.canAppendSegment() && this.maxRowsRendered()) {
-            return true;
-        }
-        return false;
-    }
-
-
-    /**
-     * Return true if the last segment should be removed
+     * Return the last segment in DOM
      *
      * @returns
-     * @memberof VirtualScroller
+     * @memberof VirtualScrollTable
      */
-    shouldRemoveLast() {
-        // if we can prepend segment but max rows are rendered then we need to remove the last segment
-        if (this.canPrependSegment() && this.maxRowsRendered()) {
-            return true;
-        }
-        return false;
+    getLastSegment() {
+        return this.scrollTableViewChild.nativeElement.lastElementChild;
     }
 
 
     /**
-     * return true if all maximum rows have been rendered
+     * Return true if segments should cycle.
+     *
+     * @param {Element} segment
+     * @param {ScrollDirection} scrollDirection
+     * @param {SegmentPositions} currentPosition
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    shouldCycle(segment: Element, scrollDirection: ScrollDirection, currentPosition: SegmentPositions) {
+
+        const firstSegmentIndex = this.getSegmentIndex(this.getFirstSegment());
+        const segmentIndex = this.getSegmentIndex(segment);
+        const segmentPositionInContainer = this.getSegmentPositionInContainer(segmentIndex, firstSegmentIndex);
+
+        const previousPosition = this.segmentPositions[segmentIndex];
+        let shouldCycle = false;
+
+        if (scrollDirection === ScrollDirection.DOWN) {
+            // Segment cycle will happen while scrolling down
+            // when the upper middle segment (eg: 4th in 8 segments) has moved above viewport
+            // and there are remaining rows which can be rendered below
+            shouldCycle = this.isUpperMiddleSegment(segmentPositionInContainer)
+                &&
+                this.hasGoneAboveViewPort(previousPosition, currentPosition)
+                &&
+                this.areRowsPendingBelow();
+        } else if (scrollDirection === ScrollDirection.UP) {
+            // Segment cycle will happen while scrolling up
+            // when the upper lower segment (eg: 5th in 8 segments) has moved below viewport
+            // and there are remaining rows which can be rendered above
+            shouldCycle = this.isLowerMiddleSegment(segmentPositionInContainer)
+                &&
+                this.hasGoneBelowViewPort(previousPosition, currentPosition)
+                &&
+                this.areRowsPendingAbove();
+        }
+
+        return shouldCycle;
+    }
+
+
+    /**
+     * return true if the Segment is upper middle segment in sequence
+     *
+     * @param {number} segmentPositionInContainer
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    isUpperMiddleSegment(segmentPositionInContainer: number) {
+        return segmentPositionInContainer === Math.floor(this.segmentCount / 2) - 1;
+    }
+
+
+    /**
+     * return true if the segment is lower middle segment in sequence
+     *
+     * @param {number} segmentPositionInContainer
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    isLowerMiddleSegment(segmentPositionInContainer: number) {
+        return segmentPositionInContainer === Math.floor(this.segmentCount / 2);
+    }
+
+    /**
+     * return true if the segment has moved below the view port depending on preoius and current positions
+     *
+     * @param {*} previousPosition
+     * @param {*} currentPosition
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    hasGoneAboveViewPort(previousPosition, currentPosition) {
+        return previousPosition === SegmentPositions.PARTIAL_ABOVE && currentPosition === SegmentPositions.ABOVE;
+    }
+
+
+    /**
+     * return true if the segment has moved below the view port depending on preoius and current positions
+     *
+     * @param {*} previousPosition
+     * @param {*} currentPosition
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    hasGoneBelowViewPort(previousPosition, currentPosition) {
+        return previousPosition === SegmentPositions.PARTIAL_BELOW && currentPosition === SegmentPositions.BELOW
+    }
+
+
+    /**
+     * return true if there are rows that can be rendered above the view port
      *
      * @returns
-     * @memberof VirtualScroller
+     * @memberof VirtualScrollTable
      */
-    maxRowsRendered() {
-        if (this.end - this.start === this.maxRows) {
-            return true;
-        }
-        return false;
+    areRowsPendingBelow() {
+        const firstSegmentIndex = this.getSegmentIndex(this.getFirstSegment());
+        // rows can be rendered below if the frameIndex of the first segment is 1 less than maxFrameIndex
+        // and the segmentIndex is less than maxFrameIndexTill
+        return !(this.getFrameIndex(firstSegmentIndex) >= this.maxFrameIndex - 1 && firstSegmentIndex >= this.maxFrameIndexTill);
     }
 
 
     /**
-     *  Callback when a segment is scrolled up.
+     * return true if rows can be rendered below the view port
      *
-     * @memberof VirtualScroller
+     * @returns
+     * @memberof VirtualScrollTable
      */
-    onSegmentUp(segmentIndex: number) {
-        // since the segment is scrolled up we need to add a segment in the end
-        if (this.canAppendSegment()) {
-            const segmentToLoad = segmentIndex + this.bufferSegmentsCount;
-            this.appendSegment(segmentToLoad);
-        }
+    areRowsPendingAbove() {
+        const lastSegmentIndex = this.getSegmentIndex(this.getLastSegment());
+        return this.getFrameIndex(lastSegmentIndex) > 0;
     }
 
 
+
     /**
-     * Callback when a segment is scrolled down
+     * calcualte the actual position in DOM in whcih the segment is present in the the segment sequence
      *
      * @param {number} segmentIndex
-     * @memberof VirtualScroller
+     * @param {number} firstSegmentIndex
+     * @returns
+     * @memberof VirtualScrollTable
      */
-    onSegmentDown(segmentIndex: number) {
-        if (this.canPrependSegment()) {
-            const segmentToLoad = segmentIndex - this.bufferSegmentsCount;
-            this.prependSegment(segmentToLoad);
-        }
+    getSegmentPositionInContainer(segmentIndex: number, firstSegmentIndex: number) {
+        return firstSegmentIndex < segmentIndex ?
+            (segmentIndex - firstSegmentIndex) :
+            (this.segmentCount - (firstSegmentIndex - segmentIndex));
+
+    }
+
+    /**
+     * set the frameIndex for a segmentIndex
+     *
+     * @param {number} segmentIndex
+     * @param {number} frameIndex
+     * @memberof VirtualScrollTable
+     */
+    setFrameIndex(segmentIndex: number, frameIndex: number) {
+        this.frameIndices[segmentIndex] = frameIndex;
     }
 
 
-
     /**
-     * Check if the segment is already rendered
+     * Return the frameindex for segment by segmentIndex
      *
      * @param {number} segmentIndex
      * @returns
-     * @memberof VirtualScroller
+     * @memberof VirtualScrollTable
      */
-    isSegmentRendered(segmentIndex: number) {
-        if (this.firstSegmentIndex >= segmentIndex && this.lastSegmentIndex <= segmentIndex) {
-            return true;
-        }
-        return false;
+    getFrameIndex(segmentIndex: number) {
+        return this.frameIndices[segmentIndex];
     }
 
-    appendSegment(segmentIndex: number) {
-        if (this.isSegmentRendered(segmentIndex)) {
-            return;
+
+
+    /**
+     * Move a segment to top of all segments
+     *
+     * @memberof VirtualScrollTable
+     */
+    moveToTop() {
+        let lastSegment = this.getLastSegment();
+        let firstSegment = this.getFirstSegment();
+        if (firstSegment) {
+            this.scrollTableViewChild.nativeElement.insertBefore(lastSegment, firstSegment);
+            let frameIndex = this.getFrameIndex(this.getSegmentIndex(lastSegment));
+            frameIndex = frameIndex - 1;
+            this.zone.run(() => {
+                this.setFrameIndex(this.getSegmentIndex(lastSegment), frameIndex);
+            })
+
         }
-        const segment = this.createSegment(segmentIndex);
-
-    }
-
-    prependSegment(segmentIndex: number) {
-        if (this.isSegmentRendered(segmentIndex)) {
-            return;
-        }
-        const segment = this.createSegment(segmentIndex);
-    }
-
-    createSegment(segmentIndex: number) {
-        let componentFactory = this.componentFactoryResolver.resolveComponentFactory(TableBodySegment);
-        let componentRef = this.segmentContainer.viewContainerRef.createComponent(componentFactory);
-        console.log(this.pBodyTemplate, 'body template');]
-
-        (<TableBodySegment>componentRef.instance).segmentIndex = segmentIndex;
-        (<TableBodySegment>componentRef.instance).template = this.pBodyTemplate;
-        (<TableBodySegment>componentRef.instance).columns = this.columns;
-
-
-        (<TableBodySegment>componentRef.instance).rows = [
-
-                {"brand": "VW", "year": 2012, "color": "Orange", "vin": 0},
-                {"brand": "Audi", "year": 2011, "color": "Black", "vin": 0 + 1},
-                {"brand": "Renault", "year": 2005, "color": "Gray", "vin": 0 + 2},
-        ]
     }
 
 
     /**
-     * return the rows to be rendered in a segment
+     * Move a segment to end
      *
-     * @param {number} segmentIndex
-     * @memberof VirtualScroller
+     * @memberof VirtualScrollTable
      */
-    getRowsForSegment(segmentIndex: number) {
-        const first = this.rowsPerSegment * segmentIndex;
-        const last = first + this.rowsPerSegment;
-
-        return this.requestDataForVirtualScroll(first, last);
+    moveToEnd() {
+        let firstSegment = this.getFirstSegment();
+        let lastSegment = this.getLastSegment();
+        if (lastSegment) {
+            this.scrollTableViewChild.nativeElement.appendChild(firstSegment);
+            let frameIndex = this.getFrameIndex(this.getSegmentIndex(firstSegment));
+            frameIndex = frameIndex + 1;
+            this.zone.run(() => {
+                this.setFrameIndex(this.getSegmentIndex(firstSegment), frameIndex);
+            })
+        }
     }
 
-    requestDataForVirtualScroll(first: number, last: number) {
-        //return Observable.of([]);
+
+    /**
+     * return the height of the scroll proxy element in px
+     *
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    getScrollProxyHeight() {
+        return this.domHandler.getOuterHeight(this.scrollSizeProxy.nativeElement);
     }
+
+
+    /**
+     * Change the height of the scroll proxy table body element by diff amount which can be positvie or negative
+     * @param {number} diff
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    changeScrollProxyHeight(diff: number) {
+        let height = this.getScrollProxyHeight();
+        height = height + diff;
+        this.scrollSizeProxy.nativeElement.style.height = `${height}px`;
+        return height;
+    }
+
+
+
+    throttle(fn, threshhold, scope) {
+        threshhold = threshhold || 250;
+        let last,
+            deferTimer;
+        return function () {
+            let context = scope || this;
+
+            let now = +new Date,
+                args = arguments;
+            if (last && now < last + threshhold) {
+                // hold on to it
+                clearTimeout(deferTimer);
+                deferTimer = setTimeout(function () {
+                    last = now;
+                    fn.apply(context, args);
+                }, threshhold);
+            } else {
+                last = now;
+                fn.apply(context, args);
+            }
+        };
+    }
+
+
+    /**
+     * Return the Visible status: whether the segment is visible (completely or partial) and if above or below the viewport
+     *
+     * @param {*} segment
+     * @param {*} viewportOffset
+     * @param {*} viewportHeight
+     * @returns
+     * @memberof VirtualScrollTable
+     */
+    getVisibleStatus(segment, viewportOffset, viewportHeight) {
+        let offset = this.domHandler.getOffset(segment);
+        let height = this.domHandler.getOuterHeight(segment);
+
+        let segmentBottom = offset.top + height;
+        let viewportBottom = viewportOffset.top + viewportHeight;
+        let viewportTop = viewportOffset.top;
+        let segmentTop = offset.top;
+
+        if (segmentTop < viewportTop) {
+            if (segmentBottom < viewportTop) {
+                return SegmentPositions.ABOVE;
+            } else {
+                return SegmentPositions.PARTIAL_ABOVE;
+            }
+        } else if (segmentBottom > viewportBottom) {
+            if (segmentTop < viewportBottom) {
+                return SegmentPositions.PARTIAL_BELOW;
+            } else {
+                return SegmentPositions.BELOW; // C
+            }
+        } else {
+            return SegmentPositions.ENCLOSED; // COMPLETELY ENCLOSED
+        }
+    }
+
+
 }
-
-
-
 @Component({
-    selector: 'p-sampleSegment',
-    template: `<div>{{segmentIndex}}</div>`
-})
-export class SampleSegment {
-    @Input("segmentIndex") segmentIndex: number;
-
-    constructor(public dt: Table){
-
-    }
-}
-
-@Component({
-    selector: 'tBody[virtualScrollBodySegment]',
+    selector: '[pVirtualScrollBodySegment]',
     template: `
         <ng-container *ngIf="!dt.expandedRowTemplate">
-            <ng-template ngFor let-rowData let-rowIndex="index" [ngForOf]="rows" [ngForTrackBy]="dt.rowTrackBy">
+            <ng-template ngFor let-rowData let-rowIndex="index" [ngForOf]="rowsToDisplay" [ngForTrackBy]="dt.rowTrackBy">
                 <ng-container *ngTemplateOutlet="template; context: {$implicit: rowData, rowIndex: firstIndex + rowIndex, columns: columns}"></ng-container>
             </ng-template>
         </ng-container>
         <ng-container *ngIf="dt.expandedRowTemplate">
-            <ng-template ngFor let-rowData let-rowIndex="index" [ngForOf]="rows" [ngForTrackBy]="dt.rowTrackBy">
+            <ng-template ngFor let-rowData let-rowIndex="index" [ngForOf]="rowsToDisplay" [ngForTrackBy]="dt.rowTrackBy">
                 <ng-container *ngIf="dt.isRowExpanded(rowData); else collapsedrow">
                     <ng-container *ngTemplateOutlet="template; context: {$implicit: rowData, rowIndex: firstIndex + rowIndex, columns: columns, expanded: true}"></ng-container>
                     <ng-container *ngTemplateOutlet="dt.expandedRowTemplate; context: {$implicit: rowData, rowIndex: firstIndex + rowIndex, columns: columns}"></ng-container>
@@ -3384,28 +3567,148 @@ export class SampleSegment {
         </ng-container>
     `
 })
-export class TableBodySegment {
+export class TableBodySegment implements OnChanges {
 
-    @Input("rows") rows: Array<any>;
 
-    @Input("pTableBody") columns: Column[];
+    /**
+     * rows from dt
+     *
+     * @type {Array<any>}
+     * @memberof TableBodySegment
+     */
+    @Input("rows") rows: Array<any> = [];
 
+
+    /**
+     * Columns
+     *
+     * @type {Column[]}
+     * @memberof TableBodySegment
+     */
+    @Input("pVirtualScrollBodySegment") columns: Column[];
+
+
+    /**
+     * Body Template defines the row structure
+     *
+     * @type {TemplateRef<any>}
+     * @memberof TableBodySegment
+     */
     @Input("pTableBodyTemplate") template: TemplateRef<any>;
 
-    @Input("segmentIndex") segmentIndex: number;
 
-    @Input("firstIndex") firstIndex: number;
+    /**
+     * The index of current frame for this segment
+     *
+     * A frame is the window in which the segments are generated once.
+     * All segments shifted in same direction equal number of times are in the same frame.
+     * frameIndex increases when a segment is moved to end and decreases when the segment is moved up.
+     * Hence a segment created first will have frameIndex 0 and if its moved down two times, it will be 2.
+     *
+     * @type {number}
+     * @memberof TableBodySegment
+     */
+    @Input("frameIndex") frameIndex: number;
 
-    @Input("lastIndex") lastIndex: number;
+    /**
+     * Offset of the first record that should be displayed in this segment
+     *
+     * @readonly
+     * @type {number}
+     * @memberof TableBodySegment
+     */
+    get first(): number {
+        return this.virtualScrollTable.rowsPerSegment * (this.segmentIndex + (this.frameIndex * this.virtualScrollTable.segmentCount));
+    }
 
-    constructor(public dt: Table) { }
+    /**
+     * Return integer segmentIndex from string segmentIndex attribute
+     *
+     * @readonly
+     * @memberof TableBodySegment
+     */
+    get segmentIndex() {
+        return parseInt(this._segmentIndex);
+    }
+
+    /**
+     * Number of rows to be displayed in this segment
+     *
+     * @type {number}
+     * @memberof TableBodySegment
+     */
+    size: number;
+
+    /**
+     * Row that will be displayed by this segment
+     *
+     * @type {Array<any>}
+     * @memberof TableBodySegment
+     */
+    rowsToDisplay: Array<any> = [];
+
+    constructor(
+        public dt: Table,
+        @Attribute('segmentIndex') public _segmentIndex: string,
+        public virtualScrollTable: VirtualScrollTable) {
+        this.size = this.virtualScrollTable.rowsPerSegment;
+    }
+
+
+
+    /**
+     * OnChange Angular life cycle hook
+     * We call udpateRowToDisplay when frameIndex or rows property changes
+     *
+     * @param {SimpleChanges} changes
+     * @memberof TableBodySegment
+     */
+    ngOnChanges(changes: SimpleChanges) {
+
+        if ('frameIndex' in changes) {
+            this.updateRowToDisplay(this.first, this.size);
+        }
+        if ('rows' in changes) {
+            this.updateRowToDisplay(this.first, this.size);
+        }
+    }
+
+
+    /**
+     * Update the rows which need to be displayed for this segment
+     *
+     * @memberof TableBodySegment
+     */
+    updateRowToDisplay(first: number, size: number) {
+
+        if(this.dt && this.dt.virtualScrollDataPromise){
+            let event = this.dt.createLazyLoadMetadata();
+            event.first = first;
+            event.rows = size;
+            this.dt.virtualScrollDataPromise(event).then(data => {
+                this.rowsToDisplay = data;
+            });
+        } else {
+            if(this.dt.value) {
+                this.rowsToDisplay = this.dt.value.slice(this.first, this.first + this.size);
+            } else {
+                this.rowsToDisplay = [];
+            }
+
+        }
+
+    }
+
+
 }
+
+
 
 
 @NgModule({
     imports: [CommonModule, PaginatorModule],
-    exports: [Table, SharedModule, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment, SampleSegment, VirtualScrollSegmentContainer, VirtualScrollerHost],
-    declarations: [Table, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, TableBody, ScrollableView, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, VirtualScroller, TableBodySegment, SampleSegment, VirtualScrollSegmentContainer, VirtualScrollerHost],
-    entryComponents: [SampleSegment, TableBodySegment, VirtualScroller]
+    exports: [Table, SharedModule, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, TableBodySegment],
+    declarations: [Table, SortableColumn, SelectableRow, RowToggler, ContextMenuRow, ResizableColumn, ReorderableColumn, EditableColumn, CellEditor, TableBody, ScrollableView, SortIcon, TableRadioButton, TableCheckbox, TableHeaderCheckbox, ReorderableRowHandle, ReorderableRow, SelectableRowDblClick, TableBodySegment, VirtualScrollTable],
+    entryComponents: [TableBodySegment]
 })
 export class TableModule { }
